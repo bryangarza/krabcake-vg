@@ -1,10 +1,58 @@
 #![feature(core_intrinsics, lang_items, c_size_t)]
+#![feature(c_unwind)]
 #![no_std]
 #![allow(unused_imports)]
 
-use core::ffi::{c_char,c_int,CStr,c_size_t,c_void};
+use core::ffi::{c_char, c_int, c_size_t, c_void, CStr};
 use core::panic::PanicInfo;
+use core::ptr;
 
+extern crate alloc;
+use core::alloc::{GlobalAlloc, Layout};
+
+use alloc::vec::Vec;
+
+extern "C" {
+    // From krabcake-vg/include/pub_tool_mallocfree.h
+    // Nb: the allocators *always succeed* -- they never return NULL (Valgrind
+    // will abort if they can't allocate the memory).
+    // The 'cc' is a string that identifies the allocation point.  It's used when
+    // --profile-heap=yes is specified.
+    // extern void* VG_(malloc)         ( const HChar* cc, SizeT nbytes );
+    // extern void  VG_(free)           ( void* p );
+    //
+    // Basic types are in krabcake-vg/VEX/pub/libvex_basictypes.h
+    // HChar = C char type
+    // Implementation lives in krabcake-vg/coregrind/m_mallocfree.c
+    fn vgPlain_malloc(cc: *const c_char, nbytes: c_size_t) -> *mut c_void;
+    fn vgPlain_free(p: *mut c_void);
+}
+
+struct ValgrindAllocator;
+
+#[global_allocator]
+static ALLOCATOR: ValgrindAllocator = ValgrindAllocator;
+
+unsafe impl Sync for ValgrindAllocator {}
+
+unsafe impl GlobalAlloc for ValgrindAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let cc: &[u8] = b"cc"; // TODO: Set a unique identifier here?
+        // vgPlain_malloc(cc.as_ptr() as *const c_char, layout.size()) as *mut u8
+
+        vgPlain_malloc(cc.as_ptr() as *const c_char,  777 as c_size_t) as *mut u8
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        vgPlain_free(ptr as *mut c_void);
+    }
+}
+
+/*
+extern "C" {
+    fn printf(format: *const c_char, ...) -> c_int;
+}
+*/
 #[no_mangle]
 pub extern "C" fn hello_world(
     printn: extern "C" fn(*const c_char, n: usize) -> usize,
@@ -18,12 +66,37 @@ pub extern "C" fn hello_world(
     printu(printed as u32);
     let msg: &[u8] = b"\n";
     printn(msg.as_ptr() as *const c_char, msg.len());
+
+    // Testing allocation is currently not possible without getting linker issues.
+    // Even this does not compile:
+    // let layout = Layout::array::<u8>(1).unwrap();
+    // unsafe { ALLOCATOR.alloc(layout) };
+
+    // Ideally, we can test the allocator by doing this:
+    {
+        let mut xs: Vec<u32> = Vec::with_capacity(8);
+        let x = ptr::addr_of_mut!(xs);
+        printu(x as u32);
+        xs.push(99);
+        printu(xs.pop().unwrap());
+    }
+
+
+    // This calls the malloc implementation provided by Valgrind
+    // unsafe {
+    //     vgPlain_malloc(msg.as_ptr() as *const c_char, 777 as c_size_t);
+    // }
+
+    let msg: &[u8] = b"Goodbye world (from `rs_hello/src/lib.rs`)! ";
+    let printed = printn(msg.as_ptr() as *const c_char, msg.len());
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     let msg = CStr::from_bytes_with_nul(b"Panicked!\n\0").unwrap();
-    unsafe { libc_stuff::printf(msg.as_ptr()); }
+    unsafe {
+        libc_stuff::printf(msg.as_ptr());
+    }
     core::intrinsics::abort()
 }
 

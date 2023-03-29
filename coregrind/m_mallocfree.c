@@ -1748,6 +1748,10 @@ void add_one_block_to_stats (Arena* a, SizeT loaned)
    Otherwise, the function returns a non-NULL value. */
 void* VG_(arena_malloc) ( ArenaId aid, const HChar* cc, SizeT req_pszB )
 {
+   Bool need_to_print = False;
+   if (req_pszB == 777) {
+      need_to_print = True;
+   }
    SizeT       req_bszB, frag_bszB, b_bszB;
    UInt        lno, i;
    Superblock* new_sb = NULL;
@@ -1941,6 +1945,9 @@ void* VG_(arena_malloc) ( ArenaId aid, const HChar* cc, SizeT req_pszB )
    if (0 && aid != VG_AR_CLIENT)
       VG_(memset)(v, 0xAA, (SizeT)req_pszB);
 
+   if (need_to_print) {
+      VG_(dmsg)("VG_(arena_malloc) was called from Rust for pointer %x\n", v);
+   }
    return v;
 }
 
@@ -2096,6 +2103,8 @@ static void mergeWithFreeNeighbours (Arena* a, Superblock* sb,
  
 void VG_(arena_free) ( ArenaId aid, void* ptr )
 {
+   VG_(dmsg)("VG_(arena_free) was called for pointer %x\n", ptr);
+
    Superblock* sb;
    Block*      b;
    SizeT       b_bszB, b_pszB;
